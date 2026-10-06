@@ -1,267 +1,567 @@
-# MU3D Multimodal Deception Detection
+# AI-Powered Multimodal Lie Detection System
 
-A CPU-first multimodal lie-detection system built on the **MU3D** (Miami
-University Deception Detection Database). The model fuses facial and audio
-behavior with a temporal cross-modal transformer, regularizes with a
-multi-task auxiliary head, removes subject bias via adversarial domain
-adaptation, and is evaluated under a strict Leave-One-Subject-Out (LOSO)
-protocol. A Streamlit demo lets you run the trained model on any single video
-file.
-
-> **Status: FINAL — result accepted.** All 9 evaluation stages are
-> implemented and evaluated. Accuracy 0.575, ROC-AUC 0.594 on the full
-> 80-fold LOSO — above chance (0.50) and above published human
-> lie-detection accuracy (~54%). Stage 10 (single-video demo) added on top,
-> prediction-only, no retraining. Full writeup: `result_mu3d.docx`.
+> A research-oriented multimodal deception detection system that analyzes **facial behavior and vocal characteristics** from video using temporal transformers, multimodal fusion, multi-task learning, adversarial domain adaptation, and strict Leave-One-Subject-Out (LOSO) evaluation.
 
 ---
 
-## 1. Project objective
+## 📌 Overview
 
-Given one full video of a single speaker, predict whether the statement is a
-**lie** or a **truth**, with a calibrated probability. One full video = one
-sample (no segmentation).
+Detecting deception from human behavior is a challenging problem because deceptive behavior can manifest through multiple weak and noisy signals.
 
-Pipeline at a glance (current architecture):
+This project develops an **AI-powered multimodal lie detection system** that takes a video containing a speaker's statement and analyzes complementary visual and acoustic information to classify the statement as:
 
-```
-VideoMAE  (8-step temporal sequence)   ┐
-Landmarks (16-frame raw sequence)      │
-wav2vec2  (16-segment temporal seq.)   ├─► ONE temporal transformer ─► heads
-Prosody   (16-segment × 7 contour)     │        (~57 tokens incl. CLS)
-                                       ┘        │
-                                                ├─ lie head (primary)
-                                                ├─ anxiety head (aux)
-                                                └─ GRL ─► subject (adversarial)
-```
+- **Truth**
+- **Lie**
 
-All four modalities are fed as raw per-timestep tokens directly into a single
-transformer — no separate facial-fusion/audio-fusion step, no Bi-LSTM
-pre-aggregation.
+Instead of relying on a single behavioral signal, the system combines:
+
+- 🎥 **Visual features** extracted using VideoMAE
+- 🙂 **Facial landmark dynamics** extracted from video frames
+- 🎙️ **Speech representations** extracted using Wav2Vec 2.0
+- 🔊 **Prosodic features** describing vocal behavior
+- 🧠 **Temporal cross-modal transformer** for multimodal fusion
+- 🎯 **Multi-task learning** with an auxiliary anxiety prediction task
+- 🔄 **Gradient Reversal Layer (GRL)** for adversarial subject/domain adaptation
+- 📊 **Strict Leave-One-Subject-Out (LOSO)** evaluation to reduce subject leakage
+
+The project is designed as a **research prototype**, not as a forensic or legal lie-detection system.
 
 ---
 
-## 2. Dataset: MU3D
+## 🏗️ System Architecture
 
-- **320 videos**, **80 targets** (subjects), **4 videos per target**.
-- Conditions, fully crossed: `1PT` positive truth, `2NL` negative lie,
-  `3NT` negative truth, `4PL` positive lie.
-- `VideoID` prefix encodes the subject, e.g. `BF001`. `subject_id` is derived
-  from this and is the LOSO grouping key.
-- **Perfectly balanced**: 160 lie/160 truth, 160 neg/160 pos valence (fully
-  crossed with veracity), 40F/40M, 40 Black/40 White, 20 per Sex×Race cell.
-  → no class imbalance, plain BCE is sufficient.
+```mermaid
+flowchart TD
 
-### Codebook variable roles
+    A[Input Video] --> B[Preprocessing]
 
-| Variable | Type | Role in the model |
+    B --> C1[Video Frames]
+    B --> C2[Audio]
+
+    C1 --> D1[VideoMAE]
+    C1 --> D2[Facial Landmarks]
+
+    C2 --> D3[Wav2Vec 2.0]
+    C2 --> D4[Prosodic Features]
+
+    D1 --> E[Temporal Cross-Modal Transformer]
+    D2 --> E
+    D3 --> E
+    D4 --> E
+
+    E --> F[Multitask Heads]
+
+    F --> G1[Lie / Truth Classification]
+    F --> G2[Auxiliary Anxiety Prediction]
+
+    E --> H[Gradient Reversal Layer]
+    H --> I[Subject / Domain Classifier]
+
+    G1 --> J[Prediction]
+```
+
+---
+
+## 🔬 Multimodal Representation
+
+The system preserves temporal information instead of immediately collapsing each modality into a single vector.
+
+| Modality | Representation | Encoder / Method |
 |---|---|---|
-| `Veracity` | binary | **Primary label** |
-| `Anxious` | continuous 1–7 | **Auxiliary target** — anxiety regression head |
-| `Valence` | binary | Optional auxiliary head + fold stratification |
-| `Attractive`, `Trustworthy` | continuous 1–7 | Optional auxiliary heads (unused) |
-| `subject_id` | categorical | LOSO grouping **and** adversarial (GRL) target |
-| `Sex`, `Race` | binary | Adversarial heads exist, **off** in final config |
-| `Age` | int | Evaluation slice only |
-| `VidLength_sec`, `WordCount` | continuous | Normalization/weighting |
-| `Accuracy` | continuous | **Weighting only — NOT a feature (leaks, r=0.46)** |
-| `TruthProp`, `Sensitivity`, `Criterion` | continuous | **Excluded — leak the label** |
+| Visual | `(8, 768)` temporal sequence | VideoMAE |
+| Facial | `(16, 1404)` temporal sequence | Facial landmarks |
+| Speech | `(16, 768)` temporal sequence | Wav2Vec 2.0 |
+| Prosody | `(16, 7)` contour | Prosodic feature extraction |
 
-### Video format note
+These representations are converted into modality-aware tokens and passed into a shared temporal cross-modal transformer.
 
-Source `.wmv` files are actually MP4 containers — "wmv→mp4" is usually a fast
-remux, not a transcode.
+### Why preserve temporal sequences?
 
-### Note on this copy of the repository
+Deception-related behavioral cues may occur as **changes over time**, rather than as static characteristics.
 
-Raw source videos (`data/raw/`) and most of the normalized intermediate
-files (`data/processed/`) have been removed from this copy to keep upload
-size down — only a small sample remains. This does **not** affect
-reproducibility of the reported result: the full cached feature set (all 320
-clips, both modalities) is present under `embeddings/` and is what training
-and evaluation actually read. Regenerate `data/processed/` from the original
-raw videos via Steps 1–2 in the execution manual only if you need to
-re-extract embeddings from scratch.
+Therefore, the architecture avoids unnecessary early pooling and allows the transformer to model relationships:
+
+- within individual modalities
+- between visual and audio modalities
+- across different temporal positions
 
 ---
 
-## 3. Design decisions log
+## 🧠 Model Components
 
-1. **One video = one sample.** No segmentation; full temporal sequence preserved.
-2. **Label** = `Veracity`. Balanced dataset → plain BCE.
-3. **Evaluation** = LOSO by `subject_id`. Predictions pooled across all 80
-   folds and scored once (no per-fold std-dev).
-4. **Multi-task heads:** Lie (primary, BCE) + Anxiety (auxiliary, regression,
-   weight ≈0.2) — anxiety chosen for being orthogonal to the label (r=-0.04),
-   a genuine regularizer rather than a shortcut.
-5. **Domain adaptation** via GRL on the fused representation, adversarial
-   classifier on `subject_id` (λ=0.5). **Confirmed essential by ablation** —
-   the model collapses to chance (AUC 0.50) without it, even with temporal
-   features.
-6. **Temporal modeling — not a standalone stage.** An originally-planned
-   separate Bi-LSTM/attention stage was never built as its own module;
-   temporal handling is folded directly into feature extraction (sequences
-   preserved instead of pooled) and the fusion transformer's self-attention.
-   This reversed an earlier "skip temporal modeling" plan, after the first
-   pooled-feature pipeline hit chance-level LOSO (AUC 0.51) and a
-   linear-probe diagnostic confirmed pooled features carried no transferable
-   signal.
-7. **Excluded from model inputs:** `Accuracy`, `TruthProp`, `Sensitivity`,
-   `Criterion` (label leakage).
-8. **CPU-first.** Entire project runs on CPU (Windows, conda env
-   `liedetect`); no GPU used or required for the accepted result.
-9. **Single-video demo (Stage 10) is prediction-only** — reuses the trained
-   checkpoint and feature pipeline; trains nothing.
+### 1. VideoMAE Visual Encoder
 
-### Metadata schema (`data/master_metadata.csv`)
+VideoMAE is used as a pretrained spatio-temporal visual encoder.
 
+The extracted representation is retained as an **8-step temporal sequence** rather than being immediately pooled.
+
+### 2. Facial Landmark Stream
+
+Facial landmarks provide geometric information about facial movement.
+
+The system preserves a raw:
+
+```text
+16 × 1404
 ```
-video_id, video_path, audio_path, subject_id, label, valence, anxiety,
-sex, race, age, duration_sec, word_count, accuracy, transcript
+
+temporal sequence.
+
+The facial landmark stream is passed independently into the multimodal fusion stage.
+
+### 3. Wav2Vec 2.0 Audio Encoder
+
+Wav2Vec 2.0 provides contextual speech representations.
+
+The audio representation is retained as a:
+
+```text
+16 × 768
+```
+
+temporal sequence.
+
+### 4. Prosodic Features
+
+The system extracts a seven-dimensional prosodic representation over 16 temporal segments:
+
+```text
+16 × 7
+```
+
+This provides information about vocal behavior such as changes in speech characteristics over time.
+
+### 5. Temporal Cross-Modal Transformer
+
+The four streams are converted into tokens and combined with:
+
+- temporal positional information
+- modality embeddings
+- a classification token
+
+Self-attention allows information to flow across modalities and temporal positions.
+
+### 6. Multi-Task Learning
+
+The fused representation is used by multiple task heads.
+
+**Primary task:**
+
+```text
+Lie / Truth Classification
+```
+
+**Auxiliary task:**
+
+```text
+Anxiety Prediction
+```
+
+The auxiliary task is intended to act as a regularizer and encourage the representation to capture behavioral information beyond the primary classification label.
+
+### 7. Adversarial Domain Adaptation
+
+A **Gradient Reversal Layer (GRL)** is used with a subject/domain classifier.
+
+The objective is to discourage the learned representation from becoming overly dependent on the identity of a particular participant.
+
+Conceptually:
+
+```text
+Fused Representation
+        │
+        ├──────────────► Lie Classifier
+        │
+        ├──────────────► Anxiety Head
+        │
+        └──► GRL ──────► Subject Classifier
+```
+
+This is particularly important for deception datasets where individual behavioral characteristics can otherwise become shortcuts for classification.
+
+---
+
+# 📊 Evaluation Strategy
+
+## Leave-One-Subject-Out Evaluation
+
+The project uses **strict LOSO evaluation**.
+
+For each fold:
+
+```text
+One subject → held out for testing
+All remaining subjects → training
+```
+
+This prevents samples from the same person appearing in both training and test partitions.
+
+The process is repeated across the available subjects and predictions are aggregated for overall evaluation.
+
+### Metrics
+
+The evaluation pipeline supports:
+
+- Accuracy
+- Precision
+- Recall
+- F1-score
+- ROC-AUC
+- Equal Error Rate (EER)
+- Expected Calibration Error (ECE)
+
+---
+
+# 🧪 Calibration
+
+The repository includes calibration components for improving the interpretation of predicted probabilities.
+
+Implemented methods include:
+
+- Temperature scaling
+- Monte-Carlo dropout infrastructure
+
+Temperature scaling is implemented with safeguards for unstable temperature estimates.
+
+> **Important:** A prediction probability should not automatically be interpreted as a real-world probability that a person is lying. This system is a research prototype and should not be used for high-stakes decisions.
+
+---
+
+# 📁 Project Structure
+
+```text
+AI_powered_lieDetectionSystem/
+│
+├── calibration/
+│   ├── mc_dropout.py
+│   └── temperature_scaling.py
+│
+├── configs/
+│   ├── default.yaml
+│   ├── model.yaml
+│   ├── preprocess.yaml
+│   └── train.yaml
+│
+├── data/
+│   └── raw/
+│
+├── domain_adaptation/
+│   ├── domain_classifier.py
+│   └── grl.py
+│
+├── evaluation/
+│   ├── loso_evaluator.py
+│   └── metrics.py
+│
+├── fusion/
+│   └── temporal_cross_modal.py
+│
+├── inference/
+│   └── file_predictor.py
+│
+├── models/
+│   ├── deception_model.py
+│   ├── landmark_extractor.py
+│   ├── prosodic_features.py
+│   ├── videomae_encoder.py
+│   └── wav2vec_encoder.py
+│
+├── multitask/
+│   ├── heads.py
+│   └── multitask_loss.py
+│
+├── preprocessing/
+│   ├── audio_extractor.py
+│   ├── run_preprocessing.py
+│   └── video_normalizer.py
+│
+├── scripts/
+│   ├── 01_build_metadata.py
+│   ├── 02_preprocess.py
+│   ├── 03_extract_audio.py
+│   ├── 03_extract_embeddings.py
+│   ├── 04_run_loso.py
+│   ├── create_inference_bundle.py
+│   └── demo_predict.py
+│
+├── trainers/
+│   ├── base_trainer.py
+│   └── multitask_trainer.py
+│
+├── utils/
+│   ├── config.py
+│   ├── device.py
+│   ├── logging_utils.py
+│   ├── seed.py
+│   └── video_frames.py
+│
+├── compare_da.py
+├── linear_probe.py
+├── overfit_test.py
+├── plot_results.py
+├── show_results.py
+├── sweep_lambda.py
+├── train.py
+│
+├── environment.yml
+├── requirements.txt
+├── setup_runpod.sh
+├── setup_windows.bat
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## 4. Full workflow (current / final)
+# ⚙️ Installation
 
-**Stage 1 — Data ingestion.** Normalize FPS/resolution, `.wmv → .mp4`,
-extract 16kHz mono audio. Build `master_metadata.csv`. Prepare LOSO splits.
+## Requirements
 
-**Stage 2 — Facial analysis.** VideoMAE (frozen) kept as an 8-step temporal
-sequence `(8, 768)`. MediaPipe landmarks kept as a raw 16-frame sequence
-`(16, 1404)` — no Bi-LSTM, no fusion step; both go directly to Stage 4.
+Recommended environment:
 
-**Stage 3 — Audio analysis.** wav2vec2 (frozen) binned into a 16-segment
-sequence `(16, 768)`. Prosody as a 16-segment × 7-feature contour `(16, 7)`.
-No fusion step; both go directly to Stage 4.
+- Python 3.10
+- PyTorch
+- Transformers
+- NumPy
+- OpenCV
+- Librosa
+- MediaPipe
+- FFmpeg
 
-**Stage 4 — Multimodal fusion.** All four raw sequences → per-timestep token
-construction (~57 tokens incl. CLS) → modality-type + temporal position
-embeddings → self-attention across all four streams → pre-norm transformer
-(`norm_first=True`) → CLS → classification head. Loss: weighted BCE.
+The complete Python dependencies are listed in:
 
-**Stage 5 — Multi-task learning.** Lie (primary) + Anxiety (auxiliary)
-heads off the fused CLS representation. Backbones stayed fully frozen
-throughout.
-
-**Stage 6 — Domain adaptation.** GRL + subject-classifier (λ=0.5) on the
-fused representation. Confirmed essential by ablation.
-
-**Stage 7 — Temporal modeling — not a standalone stage** (see design
-decision 6).
-
-**Stage 8 — Calibration.** Temperature scaling, clamped to **[0.5, 5.0]**
-(raw fits were unstable on small validation folds). MC-dropout implemented
-but not used in the final reported evaluation.
-
-**Stage 9 — Evaluation (LOSO).** 80 folds, no subject leakage, predictions
-pooled and scored once: Accuracy, Precision, Recall, F1, ROC-AUC, EER, ECE.
-
-**Stage 10 — Deployment / external video inference.** Given any saved video
-file: sample 16 frames, extract audio, generate the same four features,
-standardize using a saved inference bundle, run the trained classifier,
-show truth/deception probability in a Streamlit UI. **Prediction-only.**
-
-> **Calibration caveat:** the inference bundle uses `T = 1.0`
-> (uncalibrated) rather than the fitted per-fold temperature — same trained
-> model, but demo probabilities aren't calibrated the way the reported LOSO
-> metrics are.
-
-**Execution order:** Ingestion → Facial → Audio → Fusion → Multi-task →
-Domain adaptation → Calibration → LOSO evaluation → Deployment/Prediction.
-
----
-
-## 5. Project structure
-
-```
-mu3d_lie_detection/
-├── configs/            # YAML: default, model, preprocess, train
-├── data/               # raw/ (sample only), processed/ (sample only),
-│                       #   MU3D_Codebook.xlsx, master_metadata.csv
-├── datasets/           # metadata_builder, mu3d_dataset, loso_splitter
-├── preprocessing/      # video_normalizer, audio_extractor, run_preprocessing
-├── models/             # videomae_encoder, landmark_extractor, wav2vec_encoder,
-│                       #   prosodic_features, deception_model
-├── fusion/             # temporal_cross_modal.py
-├── multitask/          # heads (lie + anxiety), multitask_loss
-├── domain_adaptation/  # grl, domain_classifier
-├── calibration/        # temperature_scaling (clamped), mc_dropout (unused in final eval)
-├── evaluation/         # metrics, loso_evaluator
-├── embeddings/         # cached SEQUENCE features — facial/, audio/
-├── trainers/           # base_trainer, multitask_trainer
-├── utils/              # config, device, seed, io, logging_utils, video_frames
-├── inference/          # file_predictor.py — single-video prediction, no training code
-├── outputs/            # loso_predictions.csv, loso_metrics.json, figures/,
-│                       #   best.pt, inference_bundle.pt, demo_uploads/,
-│                       #   *_DA_on / *_DA_off ablation backups
-├── scripts/            # 01_build_metadata, 02_preprocess, 03_extract_embeddings,
-│                       #   03_extract_audio, 04_run_loso, create_inference_bundle,
-│                       #   demo_predict
-├── logs/               # preprocess.log
-├── train.py  overfit_test.py  linear_probe.py  sweep_lambda.py
-├── compare_da.py  plot_results.py
-├── result_mu3d.docx    # results writeup (Word)
-├── setup_windows.bat  setup_runpod.sh
-├── requirements.txt  environment.yml
-└── README.md           # this file
+```text
+requirements.txt
 ```
 
----
+A Conda environment specification is also provided:
 
-## 6. Setup
+```text
+environment.yml
+```
 
-Runs on Windows, CPU only.
+### Create the environment
 
 ```bash
 conda create -n liedetect python=3.10
 conda activate liedetect
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-Requires `ffmpeg` on PATH. No GPU required — every reported result was
-produced on CPU. `streamlit` is only needed for the Stage 10 demo.
-
-## 7. Run
-
-```bash
-# one-time setup
-python scripts/01_build_metadata.py
-python scripts/02_preprocess.py
-python scripts/03_extract_embeddings.py
-python scripts/03_extract_audio.py
-
-# sanity checks
-python overfit_test.py
-python train.py
-
-# full evaluation (slow -- budget several hours on CPU)
-python scripts/04_run_loso.py --folds 5     # smoke test first
-python scripts/04_run_loso.py
-
-# results
-python plot_results.py
-```
-
-### Stage 10 — single-video prediction demo
-
-```bash
-python scripts/create_inference_bundle.py     # packages the trained checkpoint, trains nothing
-python -m streamlit run scripts/demo_predict.py
-```
+FFmpeg should also be available on the system `PATH`.
 
 ---
 
-## Progress
+# 🗂️ Dataset
 
-- [x] Stages 1–9 implemented and evaluated
-- [x] Diagnosed chance-level result via linear probe; temporal rework fixed it
-- [x] Domain-adaptation ablation and lambda sweep (0.5 confirmed optimal)
-- [x] Final result accepted — see `result_mu3d.docx`
-- [x] Stage 10 — single-video inference demo added (prediction-only)
-- [x] Project cleanup — setup scripts, requirements/environment sync, stale
-      embedding caches, stray empty file all corrected
+This project uses the **MU3D (Miami University Deception Detection Database)**.
 
-**Not done / documented as future work:** eGeMAPS audio features, facial
-Action Units (OpenFace), GPU fine-tuning of the backbones (LoRA), a
-calibrated (non-1.0-temperature) inference bundle.
+The dataset itself is **not included in this repository**.
+
+You must obtain the dataset through the appropriate source/licensing process before running the complete preprocessing and training pipeline.
+
+The expected local data layout should follow the structure used by the preprocessing scripts.
+
+```text
+data/
+└── raw/
+    └── <dataset videos>
+```
+
+Generated intermediate data, embeddings, model checkpoints, and other large artifacts are intentionally excluded from GitHub through `.gitignore`.
+
+---
+
+# 🚀 Running the Pipeline
+
+## 1. Build Metadata
+
+```bash
+python scripts/01_build_metadata.py
+```
+
+## 2. Preprocess Videos
+
+```bash
+python scripts/02_preprocess.py
+```
+
+## 3. Extract Embeddings
+
+```bash
+python scripts/03_extract_embeddings.py
+```
+
+## 4. Extract Audio Features
+
+```bash
+python scripts/03_extract_audio.py
+```
+
+## 5. Run Training
+
+```bash
+python train.py
+```
+
+## 6. Run a Small Sanity Test
+
+Before a full experiment, use:
+
+```bash
+python overfit_test.py
+```
+
+This can help identify implementation or data-pipeline problems before committing computational resources to a full experiment.
+
+## 7. Run LOSO Evaluation
+
+For an initial smoke test:
+
+```bash
+python scripts/04_run_loso.py --folds 5
+```
+
+For the complete evaluation:
+
+```bash
+python scripts/04_run_loso.py
+```
+
+> Full LOSO evaluation can be computationally expensive depending on the hardware and configuration.
+
+---
+
+# 🔎 Inference
+
+The project also contains a prediction pipeline for running inference on an individual video.
+
+First create the inference bundle:
+
+```bash
+python scripts/create_inference_bundle.py
+```
+
+Then run the prediction application using the project's inference script/environment.
+
+The inference pipeline reuses the trained model and feature-extraction process rather than retraining the model.
+
+---
+
+# 🧩 Important Design Principles
+
+### No subject leakage
+
+The evaluation protocol is designed around subject-independent testing.
+
+### Multimodal learning
+
+Visual and acoustic signals are processed independently before being jointly modeled.
+
+### Temporal modeling
+
+Temporal sequences are retained to allow the fusion transformer to model behavioral changes over time.
+
+### Adversarial subject invariance
+
+The GRL-based domain adaptation component attempts to reduce dependence on participant identity.
+
+### Reproducibility
+
+Configuration files, environment specifications, preprocessing scripts, training scripts, and evaluation code are included in the repository.
+
+---
+
+# 📌 Limitations
+
+This project should be interpreted as an **experimental machine-learning research system**, not as a reliable method for determining whether a person is actually lying.
+
+Important limitations include:
+
+- Human deception is highly context dependent.
+- Behavioral cues are not uniquely associated with deception.
+- Dataset size and diversity limit generalization.
+- Dataset-specific biases may remain.
+- Performance on controlled datasets does not guarantee performance in real-world environments.
+- Model confidence should not be treated as proof of deception.
+- External datasets and real-world testing are required before making broader claims.
+
+---
+
+# 🔮 Future Work
+
+Potential extensions include:
+
+- LoRA-based fine-tuning of pretrained visual and audio backbones
+- More advanced audio representations
+- eGeMAPS / richer acoustic features
+- Facial Action Units
+- Improved cross-modal attention mechanisms
+- Larger and more diverse deception datasets
+- Cross-dataset evaluation
+- More robust probability calibration
+- GPU-accelerated training
+- Real-time video inference
+- Improved interpretability and error analysis
+- Evaluation under uncontrolled real-world conditions
+
+---
+
+# 🛠️ Technologies Used
+
+| Category | Technologies |
+|---|---|
+| Language | Python |
+| Deep Learning | PyTorch |
+| Transformers | Hugging Face Transformers |
+| Visual Encoder | VideoMAE |
+| Audio Encoder | Wav2Vec 2.0 |
+| Facial Analysis | MediaPipe |
+| Audio Processing | Librosa |
+| Video Processing | OpenCV, FFmpeg |
+| Fusion | Temporal Cross-Modal Transformer |
+| Domain Adaptation | Gradient Reversal Layer |
+| Evaluation | LOSO, ROC-AUC, F1, EER, ECE |
+| Environment | Conda / pip |
+
+---
+
+# 📚 Research Context
+
+This project builds upon research in:
+
+- Audio-visual deception detection
+- Multimodal representation learning
+- Temporal transformers
+- Parameter-efficient fine-tuning
+- Domain-adversarial learning
+- Subject-independent evaluation
+- Behavioral signal processing
+
+Relevant datasets and research areas include MU3D and other publicly studied deception-detection benchmarks.
+
+---
+
+# 👨‍💻 Project
+
+**AI-Powered Multimodal Lie Detection System**
+
+Developed as an academic/research project exploring multimodal machine learning for deception detection.
+
+**Repository:**  
+`debarghya2002/AI_powered_lieDetectionSystem`
+
+---
+
+## ⚠️ Disclaimer
+
+This software is intended **for academic and research purposes only**.
+
+It should not be used to make decisions about a person's honesty, criminal responsibility, employment, medical treatment, financial eligibility, or any other high-stakes decision.
+
+A model prediction is not evidence that a person is lying.
