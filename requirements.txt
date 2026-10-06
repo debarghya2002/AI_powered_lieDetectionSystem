@@ -1,0 +1,17 @@
+torch==2.2.2
+torchvision
+torchaudio
+transformers
+opencv-python
+mediapipe
+librosa
+numpy
+pandas
+scikit-learn
+scipy
+matplotlib
+tqdm
+pyyaml
+joblib
+openpyxl
+streamlit

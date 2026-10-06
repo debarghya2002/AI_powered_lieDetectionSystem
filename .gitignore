@@ -1,0 +1,101 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ==============================
+# Virtual environments
+# ==============================
+.venv/
+venv/
+env/
+ENV/
+
+# ==============================
+# Environment / secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# macOS
+# ==============================
+.DS_Store
+.AppleDouble
+.LSOverride
+__MACOSX/
+
+# ==============================
+# Jupyter
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# Datasets
+# ==============================
+data/raw/*
+data/processed/*
+datasets/*
+*.zip
+
+# ==============================
+# Generated embeddings
+# ==============================
+embeddings/facial/*
+embeddings/audio/*
+embeddings/*
+
+# ==============================
+# Model checkpoints / weights
+# ==============================
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# ==============================
+# Generated outputs
+# ==============================
+outputs/*
+logs/*
+runs/
+wandb/
+
+# ==============================
+# Media files
+# ==============================
+*.mp4
+*.mp3
+*.wav
+*.wmv
+*.avi
+*.mov
+*.mkv
+
+# ==============================
+# Temporary files
+# ==============================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# ==============================
+# IDE
+# ==============================
+.vscode/
+.idea/
+
+# ==============================
+# OS / miscellaneous
+# ==============================
+Thumbs.db
+
+# Keep directory placeholders
+!**/.gitkeep

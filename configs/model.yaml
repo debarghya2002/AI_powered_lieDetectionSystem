@@ -1,0 +1,16 @@
+# Frozen encoder identifiers -- used by scripts/03_extract_embeddings.py,
+# scripts/03_extract_audio.py, and scripts/create_inference_bundle.py.
+# Freezing and pooling behavior are fixed in the encoder classes themselves
+# (both keep the temporal axis, no mean-pooling) -- not configurable here.
+videomae:
+  pretrained: MCG-NJU/videomae-base
+
+wav2vec2:
+  pretrained: facebook/wav2vec2-base-960h
+
+# Fusion transformer hyperparameters -- used by models/deception_model.py.
+cross_modal_transformer:
+  d_model: 256
+  n_heads: 4
+  n_layers: 2
+  dropout: 0.3

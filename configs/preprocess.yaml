@@ -1,0 +1,9 @@
+video:
+  target_fps: 15
+  resolution: [224, 224]
+  container: mp4          # source .wmv are MP4 containers -> usually remux only
+audio:
+  sample_rate: 16000
+  channels: 1             # mono
+frames:
+  num_sampled: 16         # 16-32 uniformly sampled frames for VideoMAE

@@ -1,0 +1,23 @@
+# Global config. Device is auto-detected; all paths are relative to project root.
+seed: 42
+device: auto              # auto -> cuda if available else cpu
+project_root: .
+
+paths:
+  raw_videos: data/raw
+  processed_video: data/processed/video
+  processed_audio: data/processed/audio
+  metadata: data/master_metadata.csv
+  codebook: data/MU3D_Codebook.xlsx
+  embeddings_facial: embeddings/facial
+  embeddings_audio: embeddings/audio
+  outputs: outputs
+  logs: logs
+
+runtime:
+  batch_size: 2           # 1-4 on the 16GB CPU machine
+  num_workers: 0          # 0 = Windows-safe
+  grad_accum_steps: 1
+  cache_embeddings: true  # extract once, reuse across folds
+
+defaults: [preprocess, model, train]

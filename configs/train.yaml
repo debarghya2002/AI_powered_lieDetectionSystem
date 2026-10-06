@@ -1,0 +1,20 @@
+optim:
+  lr: 3.0e-4
+  weight_decay: 5.0e-2
+  epochs: 50
+  early_stopping_patience: 20
+
+multitask:
+  lie_weight: 1.0         # primary
+  anxiety_weight: 0.2     # lambda for anxiety regression
+  # optional heads (disabled by default; enable in multitask/heads.py too)
+  valence_weight: 0.0
+  attractive_weight: 0.0
+  trustworthy_weight: 0.0
+
+domain_adaptation:
+  enabled: true
+  grl_lambda: 0.5         # gradient reversal strength
+  use_subject: true
+  use_sex: false
+  use_race: false
